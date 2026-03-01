@@ -30,6 +30,12 @@
       font-size: 16px;
       border: 1px solid #ccc;
       border-radius: 5px;
+      box-sizing: border-box;
+    }
+
+    #loginForm input:focus {
+      border-color: #007BFF;
+      outline: none;
     }
 
     #loginForm button {
@@ -46,11 +52,6 @@
     #loginForm button:hover {
       background-color: #0056b3;
     }
-    #loginForm input:focus {
-      border-color: #007BFF;
-      outline: none;
-    }
-    
 
     /* Popup */
     #popup {
@@ -78,6 +79,7 @@
 
     #popup-box.blocked { border: 2px solid red; }
     #popup-box.success { border: 2px solid green; }
+    #popup-box.warning { border: 2px solid orange; }
 
     #popup-box button {
       margin-top: 20px;
@@ -96,7 +98,7 @@
   <!-- Popup -->
   <div id="popup">
     <div id="popup-box">
-      <h2 id="popup-icon">🥳</h2>
+      <h2 id="popup-icon"></h2>
       <h2 id="popup-title"></h2>
       <p id="popup-message"></p>
       <button onclick="document.getElementById('popup').classList.remove('show')">OK</button>
@@ -105,44 +107,49 @@
 
   <!-- Login Form -->
   <form id="loginForm">
-    <input type="text" name="username" placeholder="Username" required>
-    <input type="password" name="password" placeholder="Password" required>
-    <input type="hidden" name="behavior_data" id="behaviorData">
+    <input type="text"     name="username"      placeholder="Username" required />
+    <input type="password" name="password"      placeholder="Password" required />
+    <input type="hidden"   name="behavior_data" id="behaviorData" />
     <button type="submit">Login</button>
   </form>
 
   <script>
     const behavior = {
       mouseMoves: [],
-      keyTimings: [],
       keyIntervals: [],
       clickPositions: [],
       formFocusTime: null,
       formSubmitTime: null,
-      lastKeyTime: null,
     };
+
+    let lastKeyTime = null;
 
     document.addEventListener('mousemove', (e) => {
       behavior.mouseMoves.push({ x: e.clientX, y: e.clientY, t: Date.now() });
+      if (behavior.mouseMoves.length > 200) behavior.mouseMoves.shift();
     });
 
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', () => {
       const now = Date.now();
-      if (behavior.lastKeyTime !== null) {
-        behavior.keyIntervals.push(now - behavior.lastKeyTime);
-      }
-      behavior.lastKeyTime = now;
+      if (lastKeyTime !== null) behavior.keyIntervals.push(now - lastKeyTime);
+      lastKeyTime = now;
     });
 
     document.addEventListener('click', (e) => {
-      behavior.clickPositions.push({ x: e.clientX, y: e.clientY, t: Date.now() });
+      behavior.clickPositions.push({ x: e.clientX, y: e.clientY });
     });
 
     document.getElementById('loginForm').addEventListener('focusin', () => {
-      if (!behavior.formFocusTime) {
-        behavior.formFocusTime = Date.now();
-      }
+      if (!behavior.formFocusTime) behavior.formFocusTime = Date.now();
     });
+
+    function showPopup(type, icon, title, message) {
+      document.getElementById('popup-icon').textContent = icon;
+      document.getElementById('popup-title').textContent = title;
+      document.getElementById('popup-message').textContent = message;
+      document.getElementById('popup-box').className = type;
+      document.getElementById('popup').classList.add('show');
+    }
 
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -151,33 +158,32 @@
       document.getElementById('behaviorData').value = JSON.stringify(behavior);
 
       const formData = new FormData(document.getElementById('loginForm'));
-
-      const response = await fetch('/login', {
-        method: 'POST',
-        body: formData
-      });
-
+      const response = await fetch('/login', { method: 'POST', body: formData });
       const result = await response.json();
 
-      const popup = document.getElementById('popup');
-      const box = document.getElementById('popup-box');
-      const icon = document.getElementById('popup-icon');
-      const title = document.getElementById('popup-title');
-      const message = document.getElementById('popup-message');
-
       if (result.blocked) {
-        icon.textContent = '😭';
-        title.textContent = 'Bot Detected!';
-        message.textContent = 'Suspicious behavior was detected.';
-        box.className = 'blocked';
+        if (result.lockout && result.time_remaining) {
+          let sec = result.time_remaining;
+          showPopup('blocked', '🔒', 'Locked Out', `Too many attempts. Try again in ${sec}s.`);
+          const interval = setInterval(() => {
+            sec--;
+            if (sec <= 0) {
+              clearInterval(interval);
+              document.getElementById('popup').classList.remove('show');
+            } else {
+              document.getElementById('popup-message').textContent = `Too many attempts. Try again in ${sec}s.`;
+            }
+          }, 1000);
+        } else if (result.rate_limited) {
+          showPopup('blocked', '😖', 'Slow Down!', 'Too many attempts. Please wait before trying again.');
+        } else {
+          showPopup('blocked', '😭', 'Bot Detected!', result.reason || 'Suspicious behavior was detected.');
+        }
+      } else if (result.warning) {
+        showPopup('warning', '😵‍💫', 'Warning', `Behavior is somewhat suspicious. (Score: ${result.score})`);
       } else {
-        icon.textContent = '🥳';
-        title.textContent = 'I am not a robot';
-        message.textContent = 'Congratulations! You have successfully logged in.';
-        box.className = 'success';
+        showPopup('success', '🥳', 'Welcome!', 'Congratulations! You have successfully logged in.');
       }
-
-      popup.classList.add('show');
     });
   </script>
 
