@@ -30,6 +30,15 @@ ip_endpoint_log = defaultdict(lambda: defaultdict(list))
 # IPs that hit the honeypot
 honeypot_hits = set()
 
+# {ip: set of usernames attempted}
+ip_login_set = defaultdict(set)
+
+# {ip: {"attempts": int, "failures": int}}
+ip_behavior_stats = defaultdict(lambda: {"attempts": 0, "failures": 0})
+
+# defaultdict
+ip_combo_log = defaultdict(list)
+
 # Configuration
 RATE_LIMIT_WINDOW  = 60   # seconds
 RATE_LIMIT_MAX     = 5    # max attempts per window
@@ -37,6 +46,10 @@ LOCKOUT_THRESHOLD  = 10   # max attempts before block
 BLOCK_DURATION     = 300  # seconds (5 min)
 ENDPOINT_RATE_WINDOW = 10 # seconds
 ENDPOINT_RATE_MAX    = 8  # max hits per endpoint per window
+USERNAME_DIVERSITY_MAX = 5
+FAILURE_RATIO_THRESHOLD = 0.8
+COMBO_WINDOW = 60
+COMBO_MAX = 5
 
 # Known scraper user agents (simplified)
 SCRAPER_USER_AGENTS = [
@@ -61,6 +74,44 @@ SCRAPER_USER_AGENTS = [
     "httpie",
     "postmanruntime",
 ]
+
+BREACHED_PASSWORDS = {
+    "password123",
+    "123456",
+    "qwerty",
+    "letmein",
+    "admin",
+    "welcome",
+    "iloveyou",
+    "monkey",
+    "abc123",
+    "password1",
+    "12345678",
+    "sunshine",
+    "princess",
+    "goodbye",
+    "curl",
+    "wget",
+    "python-requests",
+    "bot",
+    "spider",
+    "crawler",
+    "scraper",
+    "httpclient",
+    "java",
+    "ruby",
+    "php",
+    "go-http-client",
+    "libwww-perl",
+    "httpx",
+    "axios",
+    "fetch",
+    "okhttp",
+    "httpclient",
+    "httpie",
+    "postmanruntime",
+
+}
 
 # ─── Rate Limiting & Lockout Helpers ──────────────────────────────────────────
 
@@ -161,6 +212,76 @@ def check_scraper(ip: str, endpoint: str) -> dict | None:
             "score": 100
         }
     return None
+
+# -- Crendentials Stuffing Helpers ---
+def is_username_diverse(ip: str, username: str) -> bool:
+    ip_login_set[ip].add(username)
+    return len(ip_login_set[ip]) > USERNAME_DIVERSITY_MAX
+
+def is_failure_ratio_high(ip: str) -> bool:
+    stats = ip_behavior_stats[ip]
+    attempts = stats["attempts"]
+    failures = stats["failures"]
+    if attempts < 5:
+        return False
+    return (failures / attempts) >= FAILURE_RATIO_THRESHOLD
+
+def is_combo_stuffing(ip: str, username: str, password: str) -> bool:
+    now = time.time()
+    ip_combo_log[ip] = [
+        c for c in ip_combo_log[ip] if now - c["timestamp"] < COMBO_WINDOW
+    ]
+    combo_key = f"{username}:{password}"
+    existing = [c for c in ip_combo_log[ip] if c["combo"] == combo_key]
+    if not existing:
+        ip_combo_log[ip].append({"combo": combo_key, "timestamp": now})
+    return len(ip_combo_log[ip]) >= COMBO_MAX
+
+def is_breached_password(password: str) -> bool:
+    return password in BREACHED_PASSWORDS
+
+def check_credentials_stuffing(ip: str, username: str, password: str) -> dict | None:
+    ip_behavior_stats[ip]["attempts"] += 1
+    if is_username_diverse(ip, username):
+        print(f"[BotDetector] High username diversity from IP {ip}")
+        ip_behavior_stats[ip]["failures"] += 1
+        return {
+            "blocked": True,
+            "reason": "Too many different usernames attempted",
+            "score": 80
+        }
+    if is_failure_ratio_high(ip):
+        print(f"[BotDetector] High failure ratio from IP {ip}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {
+            "blocked": True,
+            "reason": "High failure ratio detected",
+            "score": 100,
+            "stuffing": True
+        }
+    if is_combo_stuffing(ip, username, password):
+        print(f"[BotDetector] Credential combo stuffing detected from IP {ip}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {
+            "blocked": True,
+            "reason": "Too many attempts with same username/password combo",
+            "score": 100,
+            "stuffing": True
+        }
+    if is_breached_password(password):
+        print(f"[BotDetector] Breached password used from IP {ip}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {
+            "blocked": False,
+            "warning": True,
+            "reason": "Breached password detected",
+            "score": 40,
+            "breached_password": True,
+            "message": "This password has been exposed in a data breach. Consider changing it.",
+        }
+    return None
+
+
 
 
 # ─── Scoring Engine ───────────────────────────────────────────────────────────
@@ -326,6 +447,14 @@ def login():
             "rate_limited": True,
             "retry_after": RATE_LIMIT_WINDOW
         }), 429
+    
+    # 5. Credential stuffing check
+    stuffing_result = check_credentials_stuffing(ip, username, password)
+    if stuffing_result:
+        if stuffing_result.get("blocked"):
+            return jsonify(stuffing_result), 403
+        else:
+            return jsonify(stuffing_result), 200
 
     # 5. Record attempt
     record_attempt(ip, username)
