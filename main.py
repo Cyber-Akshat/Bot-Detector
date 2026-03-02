@@ -5,6 +5,7 @@ import math
 import statistics
 import secrets
 import time
+import hashlib
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -36,82 +37,56 @@ ip_login_set = defaultdict(set)
 # {ip: {"attempts": int, "failures": int}}
 ip_behavior_stats = defaultdict(lambda: {"attempts": 0, "failures": 0})
 
-# defaultdict
+# {ip: [{"combo": str, "timestamp": float}]}
 ip_combo_log = defaultdict(list)
 
-# Configuration
-RATE_LIMIT_WINDOW  = 60   # seconds
-RATE_LIMIT_MAX     = 5    # max attempts per window
-LOCKOUT_THRESHOLD  = 10   # max attempts before block
-BLOCK_DURATION     = 300  # seconds (5 min)
-ENDPOINT_RATE_WINDOW = 10 # seconds
-ENDPOINT_RATE_MAX    = 8  # max hits per endpoint per window
-USERNAME_DIVERSITY_MAX = 5
-FAILURE_RATIO_THRESHOLD = 0.8
-COMBO_WINDOW = 60
-COMBO_MAX = 5
+# {ip: [{"combo_hash": str, "timestamp": float}]}
+ip_submission = defaultdict(list)
 
-# Known scraper user agents (simplified)
+# Configuration
+RATE_LIMIT_WINDOW        = 60
+RATE_LIMIT_MAX           = 5
+LOCKOUT_THRESHOLD        = 10
+BLOCK_DURATION           = 300
+ENDPOINT_RATE_WINDOW     = 10
+ENDPOINT_RATE_MAX        = 8
+USERNAME_DIVERSITY_MAX   = 5
+FAILURE_RATIO_THRESHOLD  = 0.8
+COMBO_WINDOW             = 60
+COMBO_MAX                = 5
+SPAM_SUBMISSION_WINDOW   = 60
+
+# Known scraper user agents
 SCRAPER_USER_AGENTS = [
-    "python-requests",
-    "curl",
-    "wget",
-    "bot",
-    "spider",
-    "crawler",
-    "scraper",
-    "httpclient",
-    "java",
-    "ruby",
-    "php",
-    "go-http-client",
-    "libwww-perl",
-    "httpx",
-    "axios",
-    "fetch",
-    "okhttp",
-    "httpclient",
-    "httpie",
-    "postmanruntime",
+    "python-requests", "curl", "wget", "bot", "spider",
+    "crawler", "scraper", "httpclient", "java", "ruby",
+    "php", "go-http-client", "libwww-perl", "httpx",
+    "axios", "fetch", "okhttp", "httpie", "postmanruntime"
 ]
 
+# Common breached passwords
 BREACHED_PASSWORDS = {
-    "password123",
-    "123456",
-    "qwerty",
-    "letmein",
-    "admin",
-    "welcome",
-    "iloveyou",
-    "monkey",
-    "abc123",
-    "password1",
-    "12345678",
-    "sunshine",
-    "princess",
-    "goodbye",
-    "curl",
-    "wget",
-    "python-requests",
-    "bot",
-    "spider",
-    "crawler",
-    "scraper",
-    "httpclient",
-    "java",
-    "ruby",
-    "php",
-    "go-http-client",
-    "libwww-perl",
-    "httpx",
-    "axios",
-    "fetch",
-    "okhttp",
-    "httpclient",
-    "httpie",
-    "postmanruntime",
-
+    "password123", "123456", "qwerty", "letmein", "admin",
+    "welcome", "iloveyou", "monkey", "abc123", "password1",
+    "12345678", "sunshine", "princess", "goodbye", "password",
+    "123456789", "12345", "1234567", "football", "shadow",
+    "master", "666666", "mustang", "1234567890", "michael",
+    "superman", "batman", "trustno1", "pass", "test", "guest"
 }
+
+# Known disposable email domains
+DISPOSABLE_EMAIL_DOMAINS = {
+    "mailinator.com", "10minutemail.com", "guerrillamail.com",
+    "temp-mail.org", "yopmail.com", "trashmail.com",
+    "fakeinbox.com", "getnada.com", "dispostable.com",
+    "maildrop.cc", "tempmail.net", "mytemp.email",
+    "disposablemail.com", "spambog.com", "mailnesia.com",
+    "throwawaymail.com", "temp-mail.io", "mailcatch.com",
+    "mail-temporaire.fr", "temp-mail.fr", "mail-temp.com",
+    "temp-mail.com", "mail-temp.net", "tempmailo.com",
+    "spam4.me", "mail-temporaire.com", "tempmail.org"
+}
+
 
 # ─── Rate Limiting & Lockout Helpers ──────────────────────────────────────────
 
@@ -147,6 +122,7 @@ def record_attempt(ip: str, username: str):
 
 def record_failed_attempt(ip: str, username: str):
     now = time.time()
+    ip_behavior_stats[ip]["failures"] += 1
     ip_recent = [t for t in ip_request_log[ip] if now - t < RATE_LIMIT_WINDOW]
     if len(ip_recent) >= LOCKOUT_THRESHOLD:
         ip_blocklist[ip] = now + BLOCK_DURATION
@@ -160,15 +136,19 @@ def record_failed_attempt(ip: str, username: str):
 def time_remaining(block_until: float) -> int:
     return max(0, int(block_until - time.time()))
 
-# ─── Scraper Detection Helper ─────────────────────────────────────────────────────────
+
+# ─── Scraper Detection Helpers ────────────────────────────────────────────────
+
 def is_bad_user_agent(ua: str) -> bool:
     if not ua or ua.strip() == "":
         return True
     ua_lower = ua.lower()
     return any(bot in ua_lower for bot in SCRAPER_USER_AGENTS)
 
+
 def has_no_referer(referer: str) -> bool:
     return not referer or referer.strip() == ""
+
 
 def is_endpoint_abused(ip: str, endpoint: str) -> bool:
     now = time.time()
@@ -176,112 +156,159 @@ def is_endpoint_abused(ip: str, endpoint: str) -> bool:
     ip_endpoint_log[ip][endpoint].append(now)
     return len(ip_endpoint_log[ip][endpoint]) >= ENDPOINT_RATE_MAX
 
+
 def check_scraper(ip: str, endpoint: str) -> dict | None:
-    ua = request.headers.get("User-Agent", "")
+    ua      = request.headers.get("User-Agent", "")
     referer = request.headers.get("Referer", "")
 
-    # 1. Honeypot check
     if ip in honeypot_hits:
         print(f"[BotDetector] Honeypot-flagged IP attempt: {ip} on {endpoint}")
-        return {
-            "blocked": True,
-            "reason": "Suspicious activity detected (honeypot hit)",
-            "score": 100
-        }
-    
-    # 2. Bad User-Agent check
+        return {"blocked": True, "reason": "Suspicious activity detected.", "score": 100}
+
     if is_bad_user_agent(ua):
-        print(f"[BotDetector] Bad User-Agent detected: {ua} from IP {ip}")
+        print(f"[BotDetector] Bad User-Agent from {ip}: '{ua}'")
         ip_blocklist[ip] = time.time() + BLOCK_DURATION
-        return {
-            "blocked": True,
-            "reason": "Suspicious User-Agent detected",
-            "score": 80
-        }
-    # 3. No referer on login endpoint
+        return {"blocked": True, "reason": "Suspicious client detected.", "score": 100}
+
     if endpoint == "/login" and has_no_referer(referer):
-        print(f"[BotDetector] No referer on login attempt from IP {ip}")
-    
-    # 4. Endpoint abuse check
+        print(f"[BotDetector] No referer on login from {ip}")
+
     if is_endpoint_abused(ip, endpoint):
-        print(f"[BotDetector] Endpoint abuse detected: {endpoint} from IP {ip}")
+        print(f"[BotDetector] Endpoint abuse from {ip} on {endpoint}")
         ip_blocklist[ip] = time.time() + BLOCK_DURATION
-        return {
-            "blocked": True,
-            "reason": "Too many requests to this endpoint",
-            "score": 100
-        }
+        return {"blocked": True, "reason": "Too many requests to this endpoint.", "score": 100}
+
     return None
 
-# -- Crendentials Stuffing Helpers ---
+
+# ─── Credential Stuffing Helpers ──────────────────────────────────────────────
+
 def is_username_diverse(ip: str, username: str) -> bool:
     ip_login_set[ip].add(username)
     return len(ip_login_set[ip]) > USERNAME_DIVERSITY_MAX
 
+
 def is_failure_ratio_high(ip: str) -> bool:
-    stats = ip_behavior_stats[ip]
+    stats    = ip_behavior_stats[ip]
     attempts = stats["attempts"]
     failures = stats["failures"]
     if attempts < 5:
         return False
     return (failures / attempts) >= FAILURE_RATIO_THRESHOLD
 
+
 def is_combo_stuffing(ip: str, username: str, password: str) -> bool:
     now = time.time()
-    ip_combo_log[ip] = [
-        c for c in ip_combo_log[ip] if now - c["timestamp"] < COMBO_WINDOW
-    ]
+    ip_combo_log[ip] = [c for c in ip_combo_log[ip] if now - c["timestamp"] < COMBO_WINDOW]
     combo_key = f"{username}:{password}"
-    existing = [c for c in ip_combo_log[ip] if c["combo"] == combo_key]
-    if not existing:
+    if not any(c["combo"] == combo_key for c in ip_combo_log[ip]):
         ip_combo_log[ip].append({"combo": combo_key, "timestamp": now})
     return len(ip_combo_log[ip]) >= COMBO_MAX
 
-def is_breached_password(password: str) -> bool:
-    return password in BREACHED_PASSWORDS
 
-def check_credentials_stuffing(ip: str, username: str, password: str) -> dict | None:
+def is_breached_password(password: str) -> bool:
+    return password.lower().strip() in BREACHED_PASSWORDS
+
+
+def check_credential_stuffing(ip: str, username: str, password: str) -> dict | None:
     ip_behavior_stats[ip]["attempts"] += 1
+
     if is_username_diverse(ip, username):
-        print(f"[BotDetector] High username diversity from IP {ip}")
-        ip_behavior_stats[ip]["failures"] += 1
+        print(f"[BotDetector] High username diversity from {ip}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
         return {
             "blocked": True,
-            "reason": "Too many different usernames attempted",
-            "score": 80
+            "reason": "Too many different usernames attempted.",
+            "stuffing": True,
+            "score": 100
         }
+
     if is_failure_ratio_high(ip):
-        print(f"[BotDetector] High failure ratio from IP {ip}")
+        print(f"[BotDetector] High failure ratio from {ip}")
         ip_blocklist[ip] = time.time() + BLOCK_DURATION
         return {
             "blocked": True,
-            "reason": "High failure ratio detected",
-            "score": 100,
-            "stuffing": True
+            "reason": "Too many failed login attempts.",
+            "stuffing": True,
+            "score": 100
         }
+
     if is_combo_stuffing(ip, username, password):
-        print(f"[BotDetector] Credential combo stuffing detected from IP {ip}")
+        print(f"[BotDetector] Combo stuffing from {ip}")
         ip_blocklist[ip] = time.time() + BLOCK_DURATION
         return {
             "blocked": True,
-            "reason": "Too many attempts with same username/password combo",
-            "score": 100,
-            "stuffing": True
+            "reason": "Credential stuffing detected.",
+            "stuffing": True,
+            "score": 100
         }
+
     if is_breached_password(password):
-        print(f"[BotDetector] Breached password used from IP {ip}")
-        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        print(f"[BotDetector] Breached password from {ip} for '{username}'")
         return {
             "blocked": False,
             "warning": True,
-            "reason": "Breached password detected",
-            "score": 40,
             "breached_password": True,
-            "message": "This password has been exposed in a data breach. Consider changing it.",
+            "message": "This password has been exposed in a data breach. Please change it.",
+            "score": 40
         }
+
     return None
 
 
+# ─── Spam Bot Helpers ─────────────────────────────────────────────────────────
+
+def is_honeypot_filled(form_data: dict) -> bool:
+    return bool(form_data.get("website", "").strip())
+
+
+def is_disposable_email(email: str) -> bool:
+    if not email or "@" not in email:
+        return False
+    domain = email.strip().lower().split("@")[-1]
+    return domain in DISPOSABLE_EMAIL_DOMAINS
+
+
+def is_duplicate_submission(ip: str, username: str, password: str) -> bool:
+    now        = time.time()
+    combo_hash = hashlib.sha256(f"{username}:{password}".encode()).hexdigest()
+    ip_submission[ip] = [e for e in ip_submission[ip] if now - e["timestamp"] < SPAM_SUBMISSION_WINDOW]
+    if any(e["combo_hash"] == combo_hash for e in ip_submission[ip]):
+        print(f"[BotDetector] Duplicate submission from {ip}")
+        return True
+    ip_submission[ip].append({"combo_hash": combo_hash, "timestamp": now})
+    return False
+
+
+def check_spam_bot(ip: str, username: str, password: str, email: str, form_data: dict) -> dict | None:
+    if is_honeypot_filled(form_data):
+        print(f"[BotDetector] Honeypot field filled from {ip}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {"blocked": True, "reason": "Spam behavior detected.", "spam": True, "score": 100}
+
+    if email and is_disposable_email(email):
+        print(f"[BotDetector] Disposable email from {ip}: {email}")
+        return {
+            "blocked": True,
+            "reason": "Disposable email addresses are not allowed.",
+            "spam": True,
+            "disposable_email": True,
+            "score": 80
+        }
+
+    if is_duplicate_submission(ip, username, password):
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {"blocked": True, "reason": "Duplicate submission detected.", "spam": True, "score": 100}
+
+    focus_time  = form_data.get("formFocusTime")
+    submit_time = form_data.get("formSubmitTime")
+    if focus_time and submit_time:
+        if (submit_time - focus_time) < 500:
+            print(f"[BotDetector] Instant spam submission from {ip}")
+            ip_blocklist[ip] = time.time() + BLOCK_DURATION
+            return {"blocked": True, "reason": "Submission too fast.", "spam": True, "score": 100}
+
+    return None
 
 
 # ─── Scoring Engine ───────────────────────────────────────────────────────────
@@ -328,10 +355,10 @@ def score_behavior(data: dict, ip: str) -> dict:
     # 3. Time-on-form checks
     if focus_time and submit_time:
         time_on_form = submit_time - focus_time
-        if time_on_form < 2000:      # Less than 2 seconds
+        if time_on_form < 2000:
             score += 25
             flags.append("instant_submission")
-        elif time_on_form > 300000:  # More than 5 minutes
+        elif time_on_form > 300000:
             score += 10
             flags.append("very_slow_submission")
     else:
@@ -394,6 +421,7 @@ def coefficient_of_variation(data: list) -> float:
 def index():
     return render_template("login.html")
 
+
 @app.route("/honeypot-api")
 @app.route("/api/data")
 @app.route("/admin/users")
@@ -404,12 +432,14 @@ def honeypot():
     print(f"[BotDetector] Honeypot hit: {ip} on {request.path}")
     return jsonify({"message": "This endpoint does not exist."}), 404
 
+
 @app.route("/login", methods=["POST"])
 def login():
-    ip       = request.remote_addr
-    username = request.form.get("username", "").strip()
-    password = request.form.get("password", "")
+    ip           = request.remote_addr
+    username     = request.form.get("username", "").strip()
+    password     = request.form.get("password", "")
     raw_behavior = request.form.get("behavior_data", "{}")
+    email        = request.form.get("email", "")
 
     # 1. Scraper check
     scraper_result = check_scraper(ip, "/login")
@@ -422,7 +452,7 @@ def login():
         print(f"[BotDetector] Blocked IP attempt: {ip}")
         return jsonify({
             "blocked": True,
-            "reason": f"IP blocked due to suspicious activity. Try again in {sec} seconds.",
+            "reason": f"IP blocked. Try again in {sec} seconds.",
             "lockout": True,
             "time_remaining": sec
         }), 429
@@ -433,7 +463,7 @@ def login():
         print(f"[BotDetector] Blocked account attempt: {username}")
         return jsonify({
             "blocked": True,
-            "reason": f"Account locked due to suspicious activity. Try again in {sec} seconds.",
+            "reason": f"Account locked. Try again in {sec} seconds.",
             "lockout": True,
             "time_remaining": sec
         }), 429
@@ -447,25 +477,33 @@ def login():
             "rate_limited": True,
             "retry_after": RATE_LIMIT_WINDOW
         }), 429
-    
+
     # 5. Credential stuffing check
-    stuffing_result = check_credentials_stuffing(ip, username, password)
+    stuffing_result = check_credential_stuffing(ip, username, password)
     if stuffing_result:
         if stuffing_result.get("blocked"):
             return jsonify(stuffing_result), 403
         else:
             return jsonify(stuffing_result), 200
 
-    # 5. Record attempt
-    record_attempt(ip, username)
-
     # 6. Parse behavior data
     try:
         behavior_data = json.loads(raw_behavior)
     except json.JSONDecodeError:
-        return jsonify({"error": "Invalid behavior data format", "blocked": True}), 400
+        behavior_data = {}
 
-    # 7. Score behavior
+    # 7. Spam bot check
+    spam_result = check_spam_bot(ip, username, password, email, behavior_data)
+    if spam_result:
+        if spam_result.get("blocked"):
+            return jsonify(spam_result), 403
+        else:
+            return jsonify(spam_result), 200
+
+    # 8. Record attempt
+    record_attempt(ip, username)
+
+    # 9. Score behavior
     result = score_behavior(behavior_data, ip)
     score  = result["score"]
     flags  = result["flags"]
