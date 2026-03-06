@@ -10,7 +10,7 @@ This is the bot detector that protects from different attacks such as web scrapi
 - Headless Browser Automation
 - API Abuse
 
-# Score Risks, Not just detect! (Under DEVELOPEMENT)
+# Score Risks, Not just detect! (DEVELOPED!)
 - Score Cards (Demonstration Purpose only!)
 
 | Score         | Meaning       | Action           |
