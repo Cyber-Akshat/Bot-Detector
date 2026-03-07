@@ -53,7 +53,6 @@
       background-color: #0056b3;
     }
 
-    /* Popup */
     #popup {
       display: none;
       position: fixed;
@@ -65,9 +64,7 @@
       z-index: 999;
     }
 
-    #popup.show {
-      display: flex;
-    }
+    #popup.show { display: flex; }
 
     #popup-box {
       background: white;
@@ -110,7 +107,7 @@
     <input type="text"     name="username"      placeholder="Username" required />
     <input type="password" name="password"      placeholder="Password" required />
     <input type="hidden"   name="behavior_data" id="behaviorData" />
-    <!-- Honeypot field — hidden from real users, bots will fill it -->
+    <!-- Honeypot field -->
     <input type="text" name="website" id="website"
       style="display:none; position:absolute; left:-9999px;"
       tabindex="-1" autocomplete="off" />
@@ -124,6 +121,28 @@
       clickPositions: [],
       formFocusTime: null,
       formSubmitTime: null,
+      headless: {
+        webdriver: navigator.webdriver || false,
+        pluginCount: navigator.plugins.length,
+        languages: navigator.languages ? navigator.languages.length : 0,
+        outerWidth: window.outerWidth,
+        outerHeight: window.outerHeight,
+        devicePixelRatio: window.devicePixelRatio || 0,
+        hasChrome: !!(window.chrome),
+        hasNotification: typeof Notification !== 'undefined',
+        hasLocalStorage: (function() {
+          try {
+            localStorage.setItem('t', '1');
+            localStorage.removeItem('t');
+            return true;
+          } catch(e) {
+            return false;
+          }
+        })(),
+        colorDepth: screen.colorDepth || 0,
+        platform: navigator.platform || '',
+        hardwareConcurrency: navigator.hardwareConcurrency || 0,
+      }
     };
 
     let lastKeyTime = null;
@@ -180,6 +199,8 @@
           }, 1000);
         } else if (result.rate_limited) {
           showPopup('blocked', '😖', 'Slow Down!', 'Too many attempts. Please wait before trying again.');
+        } else if (result.api_abuse) {
+          showPopup('blocked', '🔌', 'API Abuse Detected!', result.reason || 'Suspicious API access detected.');
         } else if (result.stuffing) {
           showPopup('blocked', '🚨', 'Attack Detected!', result.reason || 'Credential stuffing detected.');
         } else if (result.spam) {
