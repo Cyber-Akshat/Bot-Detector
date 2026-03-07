@@ -43,6 +43,13 @@ ip_combo_log = defaultdict(list)
 # {ip: [{"combo_hash": str, "timestamp": float}]}
 ip_submission = defaultdict(list)
 
+# Add to In-Memory Stores
+# {ip: set of endpoints visited}
+ip_endpoint_set = defaultdict(set)
+
+# for global request tracking
+ip_global_log = defaultdict(list)
+
 # Configuration
 RATE_LIMIT_WINDOW        = 60
 RATE_LIMIT_MAX           = 5
@@ -55,6 +62,10 @@ FAILURE_RATIO_THRESHOLD  = 0.8
 COMBO_WINDOW             = 60
 COMBO_MAX                = 5
 SPAM_SUBMISSION_WINDOW   = 60
+GLOBAL_RATE_WINDOW       = 10
+GLOBAL_RATE_MAX          = 20
+ENUMERATION_MAX          = 6
+PAYLOAD_MAX_BYTES        = 10240
 
 # Known scraper user agents
 SCRAPER_USER_AGENTS = [
@@ -87,6 +98,78 @@ DISPOSABLE_EMAIL_DOMAINS = {
     "spam4.me", "mail-temporaire.com", "tempmail.org"
 }
 
+# ------ API Abuse Helpers -----------------------------------------------------
+
+def is_missing_browser_headers() -> bool:
+    accept = request.headers.get("Accept", "")
+    accept_language = request.headers.get("Accept-Language", "")
+    accept_encoding = request.headers.get("Accept-Encoding", "")
+    return not accept or not accept_language or not accept_encoding
+
+def is_payload_suspicious() -> bool:
+    content_length = request.content_length or 0
+    if content_length > PAYLOAD_MAX_BYTES:
+        return True
+    content_type = request.headers.get("Content-Type", "")
+    if "application/json" in content_type:
+        try:
+            data = request.get_json(silent=True)
+            if data is None:
+                return True
+        except Exception:
+            return True
+    return False
+
+def is_enumerating_endpoints(ip: str, endpoint: str) -> bool:
+    ip_endpoint_set[ip].add(endpoint)
+    return len(ip_endpoint_set[ip]) > ENUMERATION_MAX
+
+def is_globally_rate_limited(ip: str) -> bool:
+    now = time.time()
+    ip_global_log[ip] = [t for t in ip_global_log[ip] if now - t < GLOBAL_RATE_WINDOW]
+    ip_global_log[ip].append(now)
+    return len(ip_global_log[ip]) > GLOBAL_RATE_MAX
+
+def check_api_abuse(ip: str, endpoint: str) -> dict | None:
+    # 1. Global rate limit - Fastest check, do it first
+    if is_globally_rate_limited(ip):
+        print(f"[BotDetector] Global rate limit hit by {ip} on {endpoint}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {
+            "blocked": True,
+            "reason": "Too many requests. Slow down!",
+            "api_abuse": True,
+            "score": 100
+        }
+    # 2. Missing browser headers
+    if is_missing_browser_headers():
+        print(f"Missing browder headers from {ip} on {endpoint}")
+        return {
+            "blocked": True,
+            "reason": "Invalid request headers",
+            "api_abuse": True,
+            "score": 90
+        }
+    # 3. Suspicious payload
+    if is_payload_suspicious():
+        print(f"Suspicious payload from {ip}")
+        return {
+            "blocked": True,
+            "reason": "Invalid or oversized payload",
+            "api_abuse": True,
+            "score": 80
+        }
+    # 4. Endpoint enumeration
+    if is_enumerating_endpoints(ip, endpoint):
+        print(f"Endpoint enumeration from {ip}")
+        ip_blocklist[ip] = time.time() + BLOCK_DURATION
+        return {
+            "blocked": True,
+            "reason": "Suspicious endpoint scanning detected",
+            "api_abuse": True,
+            "score": 100
+        }
+    return None
 
 # ─── Rate Limiting & Lockout Helpers ──────────────────────────────────────────
 
@@ -375,7 +458,64 @@ def score_behavior(data: dict, ip: str) -> dict:
         score += 10
         flags.append("no_referer")
 
+    # 6. Headless browser checks
+    headless_data = data.get("headless", {})
+    if headless_data:
+        headless_score, headless_flags = check_headless(headless_data)
+        score += headless_score
+        flags.extend(headless_flags)
+
     return {"score": min(score, 100), "flags": flags}
+
+# ___________________________ Headless Browser Detection _______________________
+
+def check_headless(headless: dict) -> tuple[int, list]:
+    score = 0
+    flags = []
+
+    # 1. navigator.webdriver check - strongest signal
+    if headless.get("webdriver") is True:
+        score += 50
+        flags.append("webdriver_detected")
+    
+    # 2. No Plugins - real browsers always have some
+    if headless.get("pluginCount", 1) == 0:
+        score += 15
+        flags.append("no_plugins")
+    
+    # 3. Screen properly anomalies
+    outer_width = headless.get("outerWidth", 1)
+    outer_height = headless.get("outerHeight", 1)
+    if outer_width == 0 or outer_height == 0:
+        score += 20
+        flags.append("zero_outer_dimensions")
+    
+    # 4. No languages set
+    if headless.get("languages", 1) == 0:
+        score += 10
+        flags.append("no_languages")
+    
+    # 5. Missing window.chrome (Puppeteer often missing this)
+    if not headless.get("hasChrome", True):
+        score += 10
+        flags.append("no_window_chrome")
+    
+    # 6. No localStorage access
+    if not headless.get("hasLocalStorage", True):
+        score += 10
+        flags.append("no_local_storage")
+    
+    # 7. Suspicious hardware concurrency 
+    if headless.get("hardwareConcurrency", 1) == 0:
+        score += 10
+        flags.append("zero_hardware_concurrency")
+    
+    # Color depth anomaly
+    if headless.get("colorDepth", 24) < 16:
+        score += 10
+        flags.append("low_color_depth")
+    
+    return score, flags
 
 
 # ─── Math Helpers ─────────────────────────────────────────────────────────────
@@ -440,6 +580,11 @@ def login():
     password     = request.form.get("password", "")
     raw_behavior = request.form.get("behavior_data", "{}")
     email        = request.form.get("email", "")
+
+    # API abuse check
+    api_result = check_api_abuse(ip, "/login")
+    if api_result:
+        return jsonify(api_result), 403
 
     # 1. Scraper check
     scraper_result = check_scraper(ip, "/login")
