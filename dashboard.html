@@ -1,1 +1,556 @@
+<!DOCTYPE html>
+<html data-theme="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SentriBot - Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root[data-theme="dark"] {
+           --bg:           #0a0c10;
+           --bg2:          #111318;
+           --bg3:          #1a1d24;
+           --border:       #2a2d36;
+           --text:         #e8eaf0;
+           --text-muted:   #6b7280;
+           --accent:       #ef4444;
+           --accent2:      #f97316;
+           --accent3:      #22c55e;
+           --accent4:      #3b82f6;
+           --accent5:      #a855f7;
+           --card-shadow:  0 4px 24px rgba(0,0,0,0.4);
+           --glow-red:     0 0 20px rgba(239,68,68,0.15);
+           --glow-green:   0 0 20px rgba(34,197,94,0.15);
+        }
+        :root[data-theme="light"] {
+            --bg:           #f4f5f7;
+            --bg2:          #ffffff;
+            --bg3:          #eef0f4;
+            --border:       #dde1ea;
+            --text:         #111318;
+            --text-muted:   #6b7280;
+            --accent:       #dc2626;
+            --accent2:      #ea580c;
+            --accent3:      #16a34a;
+            --accent4:      #2563eb;
+            --accent5:      #9333ea;
+            --card-shadow:  0 2px 16px rgba(0,0,0,0.08);
+            --glow-red:     0 0 20px rgba(220,38,38,0.08);
+            --glow-green:   0 0 20px rgba(22,163,74,0.08);
+        }
 
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Syne', sans-serif;
+            min-height: 100vh;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 32px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg2);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo { display: flex; align-items: center; gap: 12px; }
+
+        .logo-icon {
+            width: 36px; height: 36px;
+            background: var(--accent);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+
+        .logo-text { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+        .logo-text span { color: var(--accent); }
+
+        .header-right { display: flex; align-items: center; gap: 16px; }
+
+        .live-badge {
+            display: flex; align-items: center; gap: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px; color: var(--accent3);
+            background: rgba(34,197,94,0.1);
+            border: 1px solid rgba(34,197,94,0.2);
+            padding: 5px 10px; border-radius: 20px;
+        }
+
+        .live-dot {
+            width: 6px; height: 6px;
+            background: var(--accent3); border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        .theme-toggle {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 4px; display: flex; gap: 2px;
+        }
+
+        .theme-btn {
+            padding: 6px 12px; border-radius: 20px;
+            font-size: 12px; font-weight: 600;
+            border: none; cursor: pointer;
+            transition: all 0.2s;
+            background: transparent; color: var(--text-muted);
+        }
+
+        .theme-btn.active {
+            background: var(--bg2); color: var(--text);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        }
+
+        .refresh-btn {
+            background: var(--accent4); color: white;
+            border: none; border-radius: 8px;
+            padding: 8px 16px; font-size: 13px; font-weight: 600;
+            font-family: 'Syne', sans-serif;
+            cursor: pointer; transition: opacity 0.2s;
+        }
+        .refresh-btn:hover { opacity: 0.85; }
+
+        main { padding: 32px; max-width: 1400px; margin: 0 auto; }
+
+        .page-title { font-size: 28px; font-weight: 800; margin-bottom: 4px; letter-spacing: -0.5px; }
+
+        .page-subtitle {
+            font-size: 14px; color: var(--text-muted);
+            margin-bottom: 32px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px; margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 16px; padding: 24px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            animation: fadeUp 0.4s ease both;
+        }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: var(--card-shadow); }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .stat-card:nth-child(1) { animation-delay: 0.05s; }
+        .stat-card:nth-child(2) { animation-delay: 0.10s; }
+        .stat-card:nth-child(3) { animation-delay: 0.15s; }
+        .stat-card:nth-child(4) { animation-delay: 0.20s; }
+
+        .stat-label {
+            font-size: 11px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 1px;
+            color: var(--text-muted); margin-bottom: 12px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-value { font-size: 36px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+        .stat-value.red    { color: var(--accent); }
+        .stat-value.orange { color: var(--accent2); }
+        .stat-value.green  { color: var(--accent3); }
+        .stat-value.blue   { color: var(--accent4); }
+
+        .stat-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
+
+        .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+
+        .panel {
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: 16px; overflow: hidden;
+            animation: fadeUp 0.4s ease both; animation-delay: 0.25s;
+        }
+
+        .panel-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 20px 24px; border-bottom: 1px solid var(--border);
+        }
+
+        .panel-title { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; }
+
+        .panel-count {
+            font-family: 'JetBrains Mono', monospace; font-size: 12px;
+            color: var(--text-muted); background: var(--bg3);
+            padding: 3px 8px; border-radius: 8px;
+        }
+
+        .ip-list { max-height: 380px; overflow-y: auto; }
+        .ip-list::-webkit-scrollbar { width: 4px; }
+        .ip-list::-webkit-scrollbar-track { background: transparent; }
+        .ip-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        .ip-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 24px; border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+        }
+        .ip-row:last-child { border-bottom: none; }
+        .ip-row:hover { background: var(--bg3); }
+
+        .ip-left { display: flex; align-items: center; gap: 12px; }
+
+        .ip-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .ip-indicator.blocked  { background: var(--accent);  box-shadow: var(--glow-red); }
+        .ip-indicator.honeypot { background: var(--accent5); }
+
+        .ip-addr { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; }
+        .ip-reason { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+        .ip-right { display: flex; align-items: center; gap: 10px; }
+
+        .tag {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+            padding: 3px 8px; border-radius: 6px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .tag.blocked  { background: rgba(239,68,68,0.12);  color: var(--accent); }
+        .tag.honeypot { background: rgba(168,85,247,0.12); color: var(--accent5); }
+
+        .ip-time { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
+
+        .unblock-btn {
+            background: none; border: 1px solid var(--border);
+            color: var(--text-muted); border-radius: 6px;
+            padding: 3px 8px; font-size: 11px; cursor: pointer;
+            font-family: 'JetBrains Mono', monospace; transition: all 0.15s;
+        }
+        .unblock-btn:hover { border-color: var(--accent3); color: var(--accent3); }
+
+        .flag-list { padding: 20px 24px; }
+
+        .flag-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+        .flag-row:last-child { margin-bottom: 0; }
+
+        .flag-name {
+            font-family: 'JetBrains Mono', monospace; font-size: 12px;
+            color: var(--text-muted); width: 200px; flex-shrink: 0;
+        }
+
+        .flag-bar-wrap { flex: 1; height: 6px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+        .flag-bar { height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+
+        .flag-count {
+            font-family: 'JetBrains Mono', monospace; font-size: 12px;
+            color: var(--text); font-weight: 600; width: 30px; text-align: right;
+        }
+
+        .log-panel {
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: 16px; overflow: hidden;
+            animation: fadeUp 0.4s ease 0.3s both;
+        }
+
+        .log-list { max-height: 260px; overflow-y: auto; padding: 8px 0; }
+        .log-list::-webkit-scrollbar { width: 4px; }
+        .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        .log-entry {
+            display: flex; align-items: flex-start; gap: 12px;
+            padding: 10px 24px;
+            font-family: 'JetBrains Mono', monospace; font-size: 12px;
+            border-bottom: 1px solid var(--border); transition: background 0.15s;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-entry:hover { background: var(--bg3); }
+
+        .log-time { color: var(--text-muted); flex-shrink: 0; width: 70px; }
+        .log-ip   { color: var(--accent4); flex-shrink: 0; width: 100px; }
+        .log-msg         { color: var(--text); }
+        .log-msg.red     { color: var(--accent); }
+        .log-msg.orange  { color: var(--accent2); }
+        .log-msg.green   { color: var(--accent3); }
+        .log-msg.purple  { color: var(--accent5); }
+
+        .empty { padding: 48px 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+        .empty-icon { font-size: 32px; margin-bottom: 8px; }
+
+        @media (max-width: 900px) {
+            .stats-grid  { grid-template-columns: repeat(2, 1fr); }
+            .bottom-grid { grid-template-columns: 1fr; }
+            main { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">
+            <div class="logo-icon">🪬</div>
+            <div class="logo-text">Sentri<span>Bot</span></div>
+        </div>
+        <div class="header-right">
+            <div class="live-badge">
+                <div class="live-dot"></div>
+                LIVE
+            </div>
+            <div class="theme-toggle">
+                <button class="theme-btn" id="btn-dark"  onclick="setTheme('dark')">🌙 Dark</button>
+                <button class="theme-btn" id="btn-light" onclick="setTheme('light')">☀️ Light</button>
+            </div>
+            <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+        </div>
+    </header>
+
+    <main>
+        <div class="page-title">Security Dashboard</div>
+        <div class="page-subtitle" id="last-updated">Last updated: —</div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Blocked IPs</div>
+                <div class="stat-value red" id="stat-blocked">—</div>
+                <div class="stat-sub">currently active blocks</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Honeypot Hits</div>
+                <div class="stat-value orange" id="stat-honeypot">—</div>
+                <div class="stat-sub">unique IPs flagged</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Attempts</div>
+                <div class="stat-value blue" id="stat-attempts">—</div>
+                <div class="stat-sub">login requests tracked</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Threat Level</div>
+                <div class="stat-value" id="stat-threat">—</div>
+                <div class="stat-sub" id="stat-threat-sub">based on recent activity</div>
+            </div>
+        </div>
+
+        <!-- Blocked IPs + Honeypot IPs -->
+        <div class="bottom-grid">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">😣 Blocked IPs</div>
+                    <div class="panel-count" id="blocked-count">0 IPs</div>
+                </div>
+                <div class="ip-list" id="blocked-list">
+                    <div class="empty"><div class="empty-icon">🤩</div>No blocked IPs</div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">🍯 Honeypot IPs</div>
+                    <div class="panel-count" id="honeypot-count">0 IPs</div>
+                </div>
+                <div class="ip-list" id="honeypot-list">
+                    <div class="empty"><div class="empty-icon">✅</div>No honeypot hits</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flag Breakdown + Activity Log -->
+        <div class="bottom-grid">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">⛳️ Flag Breakdown</div>
+                </div>
+                <div class="flag-list" id="flag-list">
+                    <div class="empty"><div class="empty-icon">📊</div>No flags recorded yet</div>
+                </div>
+            </div>
+            <div class="log-panel">
+                <div class="panel-header">
+                    <div class="panel-title">📋 Activity Log</div>
+                    <div class="panel-count" id="log-count">0 entries</div>
+                </div>
+                <div class="log-list" id="log-list">
+                    <div class="empty"><div class="empty-icon">🧐</div>No activity yet</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // ── Theme ──────────────────────────────────────────────────────────────
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            document.getElementById('btn-dark').classList.toggle('active', theme === 'dark');
+            document.getElementById('btn-light').classList.toggle('active', theme === 'light');
+        }
+
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        setTheme(savedTheme);
+
+        // ── Data Loading ───────────────────────────────────────────────────────
+        async function loadData() {
+            try {
+                const res  = await fetch('/dashboard/data');
+                const data = await res.json();
+                render(data);
+            } catch(e) {
+                console.error('Failed to load dashboard data', e);
+            }
+        }
+
+        function formatTime(ts) {
+            if (!ts) return '—';
+            return new Date(ts * 1000).toLocaleTimeString();
+        }
+
+        function threatLevel(blocked, honeypot) {
+            const total = blocked + honeypot;
+            if (total === 0) return { label: 'LOW',      color: 'green'  };
+            if (total < 5)   return { label: 'MODERATE', color: 'orange' };
+            if (total < 15)  return { label: 'HIGH',     color: 'red'    };
+            return                   { label: 'CRITICAL', color: 'red'    };
+        }
+
+        function render(data) {
+            const blocked  = data.blocked_ips.length;
+            const honeypot = data.honeypot_ips.length;
+            const attempts = data.total_attempts;
+
+            document.getElementById('stat-blocked').textContent  = blocked;
+            document.getElementById('stat-honeypot').textContent = honeypot;
+            document.getElementById('stat-attempts').textContent = attempts;
+
+            const threat  = threatLevel(blocked, honeypot);
+            const threatEl = document.getElementById('stat-threat');
+            threatEl.textContent = threat.label;
+            threatEl.className   = `stat-value ${threat.color}`;
+
+            document.getElementById('last-updated').textContent =
+                `Last updated: ${new Date().toLocaleTimeString()}`;
+
+            // Blocked IPs
+            const blockedList = document.getElementById('blocked-list');
+            document.getElementById('blocked-count').textContent = `${blocked} IP${blocked !== 1 ? 's' : ''}`;
+            if (blocked === 0) {
+                blockedList.innerHTML = '<div class="empty"><div class="empty-icon">🤩</div>No blocked IPs</div>';
+            } else {
+                blockedList.innerHTML = data.blocked_ips.map(item => `
+                    <div class="ip-row">
+                        <div class="ip-left">
+                            <div class="ip-indicator blocked"></div>
+                            <div>
+                                <div class="ip-addr">${item.ip}</div>
+                                <div class="ip-reason">${item.reason || 'Blocked'}</div>
+                            </div>
+                        </div>
+                        <div class="ip-right">
+                            <span class="tag blocked">blocked</span>
+                            <span class="ip-time">${item.expires_in}s left</span>
+                            <button class="unblock-btn" onclick="unblock('${item.ip}')">unblock</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Honeypot IPs
+            const honeypotList = document.getElementById('honeypot-list');
+            document.getElementById('honeypot-count').textContent = `${honeypot} IP${honeypot !== 1 ? 's' : ''}`;
+            if (honeypot === 0) {
+                honeypotList.innerHTML = '<div class="empty"><div class="empty-icon">✅</div>No honeypot hits</div>';
+            } else {
+                honeypotList.innerHTML = data.honeypot_ips.map(ip => `
+                    <div class="ip-row">
+                        <div class="ip-left">
+                            <div class="ip-indicator honeypot"></div>
+                            <div>
+                                <div class="ip-addr">${ip}</div>
+                                <div class="ip-reason">Hit a honeypot endpoint</div>
+                            </div>
+                        </div>
+                        <div class="ip-right">
+                            <span class="tag honeypot">honeypot</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Flag breakdown
+            const flagList    = document.getElementById('flag-list');
+            const flags       = data.flag_counts;
+            const flagEntries = Object.entries(flags).sort((a,b) => b[1] - a[1]);
+            const maxFlag     = flagEntries.length ? flagEntries[0][1] : 1;
+
+            const flagColors = {
+                no_mouse_movement:       '#ef4444',
+                no_keystrokes:           '#f97316',
+                instant_submission:      '#f59e0b',
+                missing_timing_data:     '#6b7280',
+                no_clicks_recorded:      '#3b82f6',
+                uniform_typing_speed:    '#8b5cf6',
+                superhuman_typing_speed: '#ec4899',
+                linear_mouse_movement:   '#06b6d4',
+                constant_mouse_speed:    '#10b981',
+                no_referer:              '#84cc16',
+                webdriver_detected:      '#ef4444',
+                no_plugins:              '#f97316',
+                zero_outer_dimensions:   '#a855f7',
+                no_languages:            '#3b82f6',
+                no_window_chrome:        '#22c55e',
+            };
+
+            if (flagEntries.length === 0) {
+                flagList.innerHTML = '<div class="empty"><div class="empty-icon">📊</div>No flags recorded yet</div>';
+            } else {
+                flagList.innerHTML = flagEntries.map(([name, count]) => `
+                    <div class="flag-row">
+                        <div class="flag-name">${name.replace(/_/g, ' ')}</div>
+                        <div class="flag-bar-wrap">
+                            <div class="flag-bar" style="width:${Math.round((count/maxFlag)*100)}%; background:${flagColors[name] || '#6b7280'}"></div>
+                        </div>
+                        <div class="flag-count">${count}</div>
+                    </div>
+                `).join('');
+            }
+
+            // Activity log
+            const logList = document.getElementById('log-list');
+            const logs    = data.activity_log || [];
+            document.getElementById('log-count').textContent = `${logs.length} entr${logs.length !== 1 ? 'ies' : 'y'}`;
+
+            if (logs.length === 0) {
+                logList.innerHTML = '<div class="empty"><div class="empty-icon">🧐</div>No activity yet</div>';
+            } else {
+                logList.innerHTML = [...logs].reverse().map(entry => `
+                    <div class="log-entry">
+                        <span class="log-time">${formatTime(entry.timestamp)}</span>
+                        <span class="log-ip">${entry.ip}</span>
+                        <span class="log-msg ${entry.type}">${entry.message}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        async function unblock(ip) {
+            await fetch('/dashboard/unblock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ip })
+            });
+            loadData();
+        }
+
+        loadData();
+        setInterval(loadData, 5000);
+    </script>
+</body>
+</html>
